@@ -3,3 +3,18 @@
 # Model checkpoints
 experiments/checkpoints/
 *.pt
+
+# Checkpoints
+experiments/checkpoints/
+*.pt
+
+# Data
+data/synthetic/
+data/real/
+
+# Logs
+*.log
+
+
+2602.20144v1.pdf
+agentoptics_explainer.html
