@@ -1,2 +1,5 @@
 /data
 /optic
+# Model checkpoints
+experiments/checkpoints/
+*.pt
