@@ -12,7 +12,7 @@ data:
   val_path:   "data/synthetic/val.h5"
   test_path:  "data/synthetic/test.h5"
   real_data:
-    enabled: true           # Try real data for validation
+    enabled: false           # Try real data for validation
     sources: ["cosmos", "gnpy"]
     download: true
   batch_size: 256

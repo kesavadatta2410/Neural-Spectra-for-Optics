@@ -1,0 +1,71 @@
+data:
+  batch_size: 256
+  n_points: 1000
+  normalize: true
+  num_workers: 4
+  real_data:
+    download: true
+    enabled: false
+    sources:
+    - cosmos
+    - gnpy
+  temperature_normalize: true
+  test_path: data/synthetic/test.h5
+  train_path: data/synthetic/train.h5
+  val_path: data/synthetic/val.h5
+evaluation:
+  baselines:
+  - pca
+  - vanilla_ae
+  n_viz_samples: 8
+  pca_components: 32
+  save_reconstructions: true
+experiment:
+  device: auto
+  name: speccompress_india_v1
+  seed: 42
+loss:
+  osnr_penalty_weight: 0.02
+  power_conservation_weight: 0.05
+  reconstruction_weight: 1.0
+  smoothness_weight: 0.1
+model:
+  bottleneck:
+    dropout: 0.1
+    hidden_dims:
+    - 512
+    - 256
+  decoder:
+    dropout: 0.1
+    hidden_dims:
+    - 256
+    - 512
+    - 1024
+  encoder:
+    channels:
+    - 1
+    - 32
+    - 64
+    - 128
+    dropout: 0.1
+    kernel_sizes:
+    - 7
+    - 5
+    - 3
+    strides:
+    - 2
+    - 2
+    - 2
+  input_dim: 1000
+  latent_dim: 32
+  temp_embed_dim: 16
+training:
+  checkpoint_dir: experiments/checkpoints
+  early_stopping_patience: 15
+  epochs: 100
+  grad_clip: 1.0
+  log_interval: 10
+  lr: 0.001
+  lr_scheduler: cosine
+  warmup_epochs: 5
+  weight_decay: 1.0e-05

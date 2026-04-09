@@ -1,0 +1,26 @@
+{
+  "SpecCompress": {
+    "SpecCompress/rmse_mean": 0.022042,
+    "SpecCompress/rmse_median": 0.019483,
+    "SpecCompress/rmse_p95": 0.039565,
+    "SpecCompress/snr_db": 32.664333,
+    "SpecCompress/power_err": 0.004167,
+    "SpecCompress/smoothness": 1.5e-05
+  },
+  "PCA": {
+    "PCA/rmse_mean": 0.007376,
+    "PCA/rmse_median": 0.007333,
+    "PCA/rmse_p95": 0.007762,
+    "PCA/snr_db": 42.687141,
+    "PCA/power_err": 0.0,
+    "PCA/smoothness": 1.7e-05
+  },
+  "VanillaAE": {
+    "VanillaAE/rmse_mean": 0.034106,
+    "VanillaAE/rmse_median": 0.032048,
+    "VanillaAE/rmse_p95": 0.052748,
+    "VanillaAE/snr_db": 29.178749,
+    "VanillaAE/power_err": 0.011478,
+    "VanillaAE/smoothness": 0.00047
+  }
+}
