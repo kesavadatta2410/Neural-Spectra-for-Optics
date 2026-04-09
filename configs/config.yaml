@@ -1,0 +1,63 @@
+# SpecCompress-India: Training Configuration
+# All hyperparameters centralized here. No hardcoding elsewhere.
+
+experiment:
+  name: "speccompress_india_v1"
+  seed: 42
+  device: "auto"            # auto | cpu | cuda
+
+data:
+  n_points: 1000            # Spectrum resolution
+  train_path: "data/synthetic/train.h5"
+  val_path:   "data/synthetic/val.h5"
+  test_path:  "data/synthetic/test.h5"
+  real_data:
+    enabled: true           # Try real data for validation
+    sources: ["cosmos", "gnpy"]
+    download: true
+  batch_size: 256
+  num_workers: 4
+  normalize: true           # Z-score normalize spectra
+  temperature_normalize: true
+
+model:
+  input_dim: 1000           # Must match data.n_points
+  latent_dim: 32            # Compressed representation
+  temp_embed_dim: 16        # Temperature embedding size
+  # Encoder 1D CNN
+  encoder:
+    channels: [1, 32, 64, 128]
+    kernel_sizes: [7, 5, 3]
+    strides: [2, 2, 2]
+    dropout: 0.1
+  # MLP bottleneck
+  bottleneck:
+    hidden_dims: [512, 256]
+    dropout: 0.1
+  # Decoder MLP
+  decoder:
+    hidden_dims: [256, 512, 1024]
+    dropout: 0.1
+
+loss:
+  reconstruction_weight: 1.0
+  smoothness_weight: 0.1
+  power_conservation_weight: 0.05
+  osnr_penalty_weight: 0.02
+
+training:
+  epochs: 100
+  lr: 1.0e-3
+  lr_scheduler: "cosine"    # cosine | step | none
+  warmup_epochs: 5
+  weight_decay: 1.0e-5
+  grad_clip: 1.0
+  early_stopping_patience: 15
+  checkpoint_dir: "experiments/checkpoints"
+  log_interval: 10          # batches
+
+evaluation:
+  baselines: ["pca", "vanilla_ae"]
+  pca_components: 32        # Match latent_dim
+  save_reconstructions: true
+  n_viz_samples: 8
