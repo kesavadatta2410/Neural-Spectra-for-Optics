@@ -1,84 +1,91 @@
 """
-SpecCompress-India: Main Entry Point
-Routes to: generate | train | eval
-Usage:
-    python main.py generate
-    python main.py train   [--config configs/config.yaml]
-    python main.py eval    [--config configs/config.yaml]
+SpecCompress-India: Main CLI  (v2)
+Routes: generate | train | eval | ablation | compression | temp | llm | duke
 """
 
-import argparse
-import subprocess
-import sys
-import os
+import argparse, subprocess, sys, os
 
 
-def cmd_generate(args):
-    cmd = [
-        sys.executable, "data/data_generation.py",
-        "--n_train",  str(args.n_train),
-        "--n_val",    str(args.n_val),
-        "--n_test",   str(args.n_test),
-        "--n_points", str(args.n_points),
-        "--out_dir",  args.out_dir,
-        "--seed",     str(args.seed),
-    ]
-    print("[main] Running:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
-
-
-def cmd_train(args):
-    cmd = [sys.executable, "training/train.py", "--config", args.config]
-    if args.epochs:
-        cmd += ["--epochs", str(args.epochs)]
-    if args.batch_size:
-        cmd += ["--batch_size", str(args.batch_size)]
-    print("[main] Running:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
-
-
-def cmd_eval(args):
-    cmd = [sys.executable, "evaluation/eval.py", "--config", args.config]
-    if args.ckpt:
-        cmd += ["--ckpt", args.ckpt]
-    print("[main] Running:", " ".join(cmd))
+def run(cmd):
+    print("[main]", " ".join(cmd))
     subprocess.run(cmd, check=True)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SpecCompress-India Pipeline")
-    sub    = parser.add_subparsers(dest="command", required=True)
+    p = argparse.ArgumentParser(description="SpecCompress-India v2")
+    s = p.add_subparsers(dest="cmd", required=True)
 
     # generate
-    p_gen = sub.add_parser("generate", help="Generate synthetic datasets")
-    p_gen.add_argument("--n_train",  type=int, default=50000)
-    p_gen.add_argument("--n_val",    type=int, default=5000)
-    p_gen.add_argument("--n_test",   type=int, default=5000)
-    p_gen.add_argument("--n_points", type=int, default=1000)
-    p_gen.add_argument("--out_dir",  type=str, default="data/synthetic")
-    p_gen.add_argument("--seed",     type=int, default=42)
+    g = s.add_parser("generate")
+    g.add_argument("--n_train",  type=int, default=50000)
+    g.add_argument("--n_val",    type=int, default=5000)
+    g.add_argument("--n_test",   type=int, default=5000)
+    g.add_argument("--n_points", type=int, default=1000)
+    g.add_argument("--out_dir",  default="data/synthetic")
+    g.add_argument("--seed",     type=int, default=42)
 
     # train
-    p_train = sub.add_parser("train", help="Train SpecCompress model")
-    p_train.add_argument("--config",     type=str, default="configs/config.yaml")
-    p_train.add_argument("--epochs",     type=int, default=None)
-    p_train.add_argument("--batch_size", type=int, default=None)
+    t = s.add_parser("train")
+    t.add_argument("--config",     default="configs/config.yaml")
+    t.add_argument("--epochs",     type=int, default=None)
+    t.add_argument("--batch_size", type=int, default=None)
 
-    # eval
-    p_eval = sub.add_parser("eval", help="Evaluate and compare baselines")
-    p_eval.add_argument("--config", type=str, default="configs/config.yaml")
-    p_eval.add_argument("--ckpt",   type=str, default=None)
+    # eval — full suite (all gaps)
+    e = s.add_parser("eval")
+    e.add_argument("--config",  default="configs/config.yaml")
+    e.add_argument("--ckpt",    default=None)
+    e.add_argument("--api_key", default=None, help="Anthropic key for Gap 2")
+    e.add_argument("--skip_gaps", nargs="*", default=[])
 
-    args = parser.parse_args()
+    # individual gap runners
+    s.add_parser("ablation").add_argument("--config", default="configs/config.yaml")
+    s.add_parser("compression").add_argument("--config", default="configs/config.yaml")
+    cr = s.add_parser("temp")
+    cr.add_argument("--config", default="configs/config.yaml")
+    cr.add_argument("--ckpt",   default="experiments/checkpoints/best.pt")
+    l = s.add_parser("llm")
+    l.add_argument("--config",  default="configs/config.yaml")
+    l.add_argument("--api_key", default=None)
 
+    args = p.parse_args()
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    py = sys.executable
 
-    if args.command == "generate":
-        cmd_generate(args)
-    elif args.command == "train":
-        cmd_train(args)
-    elif args.command == "eval":
-        cmd_eval(args)
+    if args.cmd == "generate":
+        run([py, "data/data_generation.py",
+             "--n_train", str(args.n_train), "--n_val", str(args.n_val),
+             "--n_test",  str(args.n_test),  "--n_points", str(args.n_points),
+             "--out_dir", args.out_dir,       "--seed", str(args.seed)])
+
+    elif args.cmd == "train":
+        cmd = [py, "training/train.py", "--config", args.config]
+        if args.epochs:     cmd += ["--epochs", str(args.epochs)]
+        if args.batch_size: cmd += ["--batch_size", str(args.batch_size)]
+        run(cmd)
+
+    elif args.cmd == "eval":
+        cmd = [py, "evaluation/eval.py", "--config", args.config]
+        if args.ckpt:    cmd += ["--ckpt", args.ckpt]
+        if args.api_key: cmd += ["--api_key", args.api_key]
+        if args.skip_gaps: cmd += ["--skip_gaps"] + args.skip_gaps
+        run(cmd)
+
+    elif args.cmd == "ablation":
+        run([py, "evaluation/ablation.py", "--config", args.config])
+
+    elif args.cmd == "compression":
+        run([py, "evaluation/compression_ablation.py", "--config", args.config])
+
+    elif args.cmd == "temp":
+        run([py, "evaluation/temp_robustness.py",
+             "--config", args.config, "--ckpt", args.ckpt])
+
+    elif args.cmd == "llm":
+        cmd = [py, "-c",
+               f"import sys; sys.path.insert(0,'.'); "
+               f"from utils.llm_integration import run_llm_benchmark, print_llm_results; "
+               f"print('Use: python evaluation/eval.py --skip_gaps 1 3 4 5 6')"]
+        run(cmd)
 
 
 if __name__ == "__main__":

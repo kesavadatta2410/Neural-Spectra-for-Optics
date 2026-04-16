@@ -1,40 +1,40 @@
-# SpecCompress-India: Training Configuration
-# All hyperparameters centralized here. No hardcoding elsewhere.
+# SpecCompress-India: Training Configuration v2
+# All hyperparameters centralized. No hardcoding elsewhere.
 
 experiment:
-  name: "speccompress_india_v1"
+  name: "speccompress_india_v2"
   seed: 42
   device: "auto"            # auto | cpu | cuda
 
 data:
-  n_points: 1000            # Spectrum resolution
+  n_points: 1000
   train_path: "data/synthetic/train.h5"
   val_path:   "data/synthetic/val.h5"
   test_path:  "data/synthetic/test.h5"
+  duke_path:  "data/real/duke/duke_edfa.h5"   # Duke EDFA dataset
   real_data:
-    enabled: false           # Try real data for validation
+    enabled: true
     sources: ["cosmos", "gnpy"]
     download: true
   batch_size: 256
   num_workers: 4
-  normalize: true           # Z-score normalize spectra
+  normalize: true
   temperature_normalize: true
 
 model:
-  input_dim: 1000           # Must match data.n_points
-  latent_dim: 32            # Compressed representation
-  temp_embed_dim: 16        # Temperature embedding size
-  # Encoder 1D CNN
+  input_dim: 1000
+  latent_dim: 10            # 100× compression (was 32)
+  temp_embed_dim: 16
+  temp_min: 25.0            # °C — India tropical floor
+  temp_max: 45.0            # °C — India summer ceiling
   encoder:
     channels: [1, 32, 64, 128]
     kernel_sizes: [7, 5, 3]
     strides: [2, 2, 2]
     dropout: 0.1
-  # MLP bottleneck
   bottleneck:
     hidden_dims: [512, 256]
     dropout: 0.1
-  # Decoder MLP
   decoder:
     hidden_dims: [256, 512, 1024]
     dropout: 0.1
@@ -48,16 +48,78 @@ loss:
 training:
   epochs: 100
   lr: 1.0e-3
-  lr_scheduler: "cosine"    # cosine | step | none
+  lr_scheduler: "cosine"
   warmup_epochs: 5
   weight_decay: 1.0e-5
   grad_clip: 1.0
   early_stopping_patience: 15
   checkpoint_dir: "experiments/checkpoints"
-  log_interval: 10          # batches
+  log_interval: 10
+
+# Gap 1: Compression ablation dims to sweep
+compression_ablation:
+  latent_dims: [32, 16, 10, 8]
+
+# Gap 5: Ablation model configs
+ablation:
+  variants:
+    - name: "full_model"
+      use_temp_conditioning: true
+      use_smoothness_loss: true
+      use_power_loss: true
+      use_osnr_loss: true
+      use_cnn: true
+    - name: "no_temp"
+      use_temp_conditioning: false
+      use_smoothness_loss: true
+      use_power_loss: true
+      use_osnr_loss: true
+      use_cnn: true
+    - name: "no_smoothness"
+      use_temp_conditioning: true
+      use_smoothness_loss: false
+      use_power_loss: true
+      use_osnr_loss: true
+      use_cnn: true
+    - name: "no_power"
+      use_temp_conditioning: true
+      use_smoothness_loss: true
+      use_power_loss: false
+      use_osnr_loss: true
+      use_cnn: true
+    - name: "no_osnr"
+      use_temp_conditioning: true
+      use_smoothness_loss: true
+      use_power_loss: true
+      use_osnr_loss: false
+      use_cnn: true
+    - name: "mlp_only"
+      use_temp_conditioning: true
+      use_smoothness_loss: true
+      use_power_loss: true
+      use_osnr_loss: true
+      use_cnn: false
+
+# Gap 6: Temperature robustness ranges
+temp_robustness:
+  ranges:
+    - {name: "in_distribution", min: 25,  max: 45}
+    - {name: "cold_climate",    min: -40, max: 0}
+    - {name: "desert_extreme",  min: 55,  max: 75}
+    - {name: "full_range",      min: -40, max: 75}
+
+# Gap 2: LLM integration
+llm:
+  model: "claude-haiku-4-5-20251001"
+  max_tokens: 512
+  anomaly_threshold_db: 3.0   # dB drop = channel failure
+  tasks:
+    - "channel_failure_detection"
+    - "anomaly_localization"
+    - "few_shot_failure_classification"
 
 evaluation:
-  baselines: ["pca", "vanilla_ae"]
-  pca_components: 32        # Match latent_dim
+  baselines: ["pca", "vanilla_ae", "vqvae", "deep_compress"]
+  pca_components: 10
   save_reconstructions: true
   n_viz_samples: 8

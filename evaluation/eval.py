@@ -1,179 +1,233 @@
 """
-SpecCompress-India: Evaluation + Baseline Comparison
-Compares SpecCompress against:
-  1. PCA (32 components)
-  2. Vanilla Autoencoder (no physics loss, no temp conditioning)
-
+SpecCompress-India: Full Evaluation Suite  (v2)
+Covers all 6 gaps:
+  Gap 1: Compression ratio sweep
+  Gap 2: LLM benchmark
+  Gap 3: Duke zero-shot + few-shot
+  Gap 4: SOTA baselines (DeepCompress, VQ-VAE, RD-AE, PCA)
+  Gap 5: Component ablation
+  Gap 6: Temperature robustness
 Usage:
-    python evaluation/eval.py --config configs/config.yaml
+    python evaluation/eval.py --config configs/config.yaml [--ckpt path] [--api_key KEY]
 """
 
-import sys
-import os
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import argparse
+import json, argparse, warnings
 import numpy as np
 import torch
+import torch.nn.functional as F
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
 
 from utils.helpers import set_seed, get_device, load_config, load_checkpoint
-from utils.dataloader import build_dataloaders
+from utils.dataloader import build_dataloaders, SpectraDataset
 from models.speccompress import SpecCompress
-from evaluation.metrics import compute_all_metrics
+from models.baselines import DeepCompress, VQVAE, RateDistortionAE
+from evaluation.metrics import compute_all_metrics, rmse_db, snr_db
+from evaluation.compression_ablation import run_compression_ablation
+from evaluation.ablation import run_ablation
+from evaluation.temp_robustness import run_temp_robustness
+from utils.llm_integration import run_llm_benchmark, print_llm_results
+from data.duke_loader import load_duke_dataset, make_synthetic_duke_proxy, run_zero_shot_eval, run_few_shot_finetune
 
 
-# ──────────────────────────────────────────────
-# Vanilla AE Baseline (no physics, no temp)
-# ──────────────────────────────────────────────
-import torch.nn as nn
-
-class VanillaAutoencoder(nn.Module):
-    def __init__(self, n_points: int = 1000, latent_dim: int = 32):
-        super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(n_points, 512), nn.ReLU(),
-            nn.Linear(512, 256),     nn.ReLU(),
-            nn.Linear(256, latent_dim)
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, 256), nn.ReLU(),
-            nn.Linear(256, 512),        nn.ReLU(),
-            nn.Linear(512, n_points)
-        )
-
-    def forward(self, x, temp=None):
-        z = self.encoder(x)
-        return self.decoder(z), z
-
-
-def train_vanilla_ae(train_loader, val_loader, device, n_points, latent_dim, epochs=20):
-    model = VanillaAutoencoder(n_points, latent_dim).to(device)
-    opt   = torch.optim.Adam(model.parameters(), lr=1e-3)
-    for epoch in range(epochs):
-        model.train()
-        for batch in train_loader:
-            x = batch["spectrum"].to(device)
-            x_hat, _ = model(x)
-            loss = torch.nn.functional.mse_loss(x_hat, x)
+def train_baseline(model, train_loader, device, epochs=15, lr=1e-3):
+    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    model.to(device).train()
+    for _ in range(epochs):
+        for b in train_loader:
+            sp = b["spectrum"].to(device)
+            tp = b["temperature"].to(device)
+            _, _, loss, _ = model(sp, tp)
             opt.zero_grad(); loss.backward(); opt.step()
-    print(f"  [VanillaAE] Trained {epochs} epochs.")
     return model
 
 
-def eval_model_on_loader(model, loader, device):
+@torch.no_grad()
+def collect(model, loader, device, use_temp=True):
     model.eval()
-    all_hat, all_true = [], []
-    with torch.no_grad():
-        for batch in loader:
-            x    = batch["spectrum"].to(device)
-            temp = batch["temperature"].to(device)
-            out  = model(x, temp)
-            if isinstance(out, tuple):
-                x_hat = out[0]
-            else:
-                x_hat = out
-            all_hat.append(x_hat.cpu().numpy())
-            all_true.append(x.cpu().numpy())
-    return np.concatenate(all_hat), np.concatenate(all_true)
+    hat, tru = [], []
+    for b in loader:
+        sp = b["spectrum"].to(device)
+        tp = b["temperature"].to(device)
+        out = model(sp, tp) if use_temp else model(sp)
+        xh  = out[0]
+        hat.append(xh.cpu().numpy())
+        tru.append(sp.cpu().numpy())
+    return np.concatenate(hat), np.concatenate(tru)
 
 
-# ──────────────────────────────────────────────
-# Main Eval
-# ──────────────────────────────────────────────
+def section(title):
+    print(f"\n{'='*65}")
+    print(f"  {title}")
+    print(f"{'='*65}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config",   type=str, default="configs/config.yaml")
-    parser.add_argument("--ckpt",     type=str, default=None)
-    parser.add_argument("--baselines",action="store_true", default=True)
+    parser.add_argument("--config",  default="configs/config.yaml")
+    parser.add_argument("--ckpt",    default=None)
+    parser.add_argument("--api_key", default=None,
+                        help="Anthropic API key for Gap 2 LLM benchmark")
+    parser.add_argument("--skip_gaps", nargs="*", default=[],
+                        help="Skip specific gaps, e.g. --skip_gaps 1 5")
     args = parser.parse_args()
 
+    api_key  = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
+    skip     = set(args.skip_gaps)
+
     cfg = load_config(args.config)
+    cfg["data"]["num_workers"] = 0
+    cfg["data"]["real_data"]["enabled"] = False
     set_seed(cfg["experiment"]["seed"])
-    device    = get_device(cfg["experiment"]["device"])
-    n_points  = cfg["model"]["input_dim"]
-    latent_dim = cfg["model"]["latent_dim"]
-    ckpt_path = args.ckpt or f"{cfg['training']['checkpoint_dir']}/best.pt"
-    eval_cfg  = cfg["evaluation"]
+    device   = get_device(cfg["experiment"]["device"])
+    ckpt_dir = cfg["training"]["checkpoint_dir"]
+    ckpt_path = args.ckpt or f"{ckpt_dir}/best.pt"
 
-    print("=" * 60)
-    print("  SpecCompress-India | Evaluation Suite")
-    print("=" * 60)
+    train_loader, val_loader, test_loader, stats = build_dataloaders(cfg)
+    n_pts   = cfg["model"]["input_dim"]
+    lat_dim = cfg["model"]["latent_dim"]
 
-    _, val_loader, test_loader, stats = build_dataloaders(cfg)
+    all_results = {}
 
-    # ── SpecCompress ──────────────────────────────
-    model = SpecCompress(cfg).to(device)
-    load_checkpoint(ckpt_path, model)
-    model.eval()
+    # ── GAP 4: SOTA Baseline Comparison ─────────────────────────
+    if "4" not in skip:
+        section("GAP 4: SOTA Baseline Comparison")
 
-    print("\n[1/3] Evaluating SpecCompress...")
-    x_hat_sc, x_true = eval_model_on_loader(model, test_loader, device)
-    sc_metrics = compute_all_metrics(x_hat_sc, x_true, label="SpecCompress")
-    _print_metrics(sc_metrics)
+        # Load SpecCompress
+        sc = SpecCompress(cfg).to(device)
+        ckpt_ok = False
+        if os.path.exists(ckpt_path):
+            load_checkpoint(ckpt_path, sc)
+            ckpt_ok = True
+        else:
+            warnings.warn(f"Checkpoint not found at {ckpt_path}. Training quick SC model.")
+            sc = train_baseline(sc, train_loader, device, epochs=15)
+        xh_sc, xt = collect(sc, test_loader, device)
+        sc_m = compute_all_metrics(xh_sc, xt, "SpecCompress")
 
-    results = {"SpecCompress": sc_metrics}
+        # PCA
+        X_tr = np.concatenate([b["spectrum"].numpy() for b in train_loader])
+        pca  = PCA(n_components=lat_dim).fit(X_tr)
+        X_te = np.concatenate([b["spectrum"].numpy() for b in test_loader])
+        xh_pca = pca.inverse_transform(pca.transform(X_te))
+        pca_m  = compute_all_metrics(xh_pca, X_te, "PCA")
 
-    # ── PCA Baseline ─────────────────────────────
-    if args.baselines and "pca" in eval_cfg.get("baselines", []):
-        print("\n[2/3] Evaluating PCA baseline...")
-        # Gather train data
-        train_arr = []
-        for batch in val_loader:
-            train_arr.append(batch["spectrum"].numpy())
-        X_train = np.concatenate(train_arr[:20], axis=0)   # Use subset for speed
-        X_test  = x_true
+        # DeepCompress
+        dc = DeepCompress(n_pts, lat_dim)
+        dc = train_baseline(dc, train_loader, device, epochs=15)
+        xh_dc, _ = collect(dc, test_loader, device)
+        dc_m = compute_all_metrics(xh_dc, xt, "DeepCompress")
 
-        pca = PCA(n_components=eval_cfg.get("pca_components", latent_dim))
-        pca.fit(X_train)
-        X_pca_recon = pca.inverse_transform(pca.transform(X_test))
-        pca_metrics = compute_all_metrics(X_pca_recon, X_test, label="PCA")
-        _print_metrics(pca_metrics)
-        results["PCA"] = pca_metrics
+        # VQ-VAE
+        vq = VQVAE(n_pts, lat_dim)
+        vq = train_baseline(vq, train_loader, device, epochs=15)
+        xh_vq, _ = collect(vq, test_loader, device)
+        vq_m = compute_all_metrics(xh_vq, xt, "VQ-VAE")
 
-    # ── Vanilla AE Baseline ───────────────────────
-    if args.baselines and "vanilla_ae" in eval_cfg.get("baselines", []):
-        print("\n[3/3] Training + evaluating VanillaAE baseline...")
-        _, val_loader2, test_loader2, _ = build_dataloaders(cfg)
-        vae_model = train_vanilla_ae(
-            val_loader2, test_loader2, device, n_points, latent_dim, epochs=15
+        # Rate-Distortion AE
+        rd = RateDistortionAE(n_pts, lat_dim)
+        rd = train_baseline(rd, train_loader, device, epochs=15)
+        xh_rd, _ = collect(rd, test_loader, device)
+        rd_m = compute_all_metrics(xh_rd, xt, "RD-AE")
+
+        baselines = {
+            "SpecCompress": sc_m, "PCA": pca_m,
+            "DeepCompress": dc_m, "VQ-VAE": vq_m, "RD-AE": rd_m,
+        }
+        keys = ["rmse_mean", "snr_db", "power_err", "smoothness"]
+        hdr  = f"{'Method':<16}" + "".join(f"{k:<14}" for k in keys)
+        print(hdr); print("-"*74)
+        for name, m in baselines.items():
+            row = f"{name:<16}"
+            for k in keys:
+                full_k = f"{name}/{k}"
+                row += f"{m.get(full_k, float('nan')):<14.5f}"
+            print(row)
+
+        all_results["gap4_baselines"] = {
+            n: {k.split("/")[1]: v for k,v in m.items()} for n,m in baselines.items()
+        }
+
+    # ── GAP 1: Compression Ratio Ablation ───────────────────────
+    if "1" not in skip:
+        section("GAP 1: Compression Ratio Ablation")
+        cr_results = run_compression_ablation(cfg, device, train_loader, test_loader)
+        all_results["gap1_compression"] = cr_results
+
+    # ── GAP 5: Component Ablation ────────────────────────────────
+    if "5" not in skip:
+        section("GAP 5: Component Ablation")
+        abl_results = run_ablation(cfg, device, train_loader, test_loader)
+        all_results["gap5_ablation"] = abl_results
+
+    # ── GAP 6: Temperature Robustness ────────────────────────────
+    if "6" not in skip:
+        section("GAP 6: Temperature Robustness")
+        if os.path.exists(ckpt_path):
+            tr_results = run_temp_robustness(cfg, device, ckpt_path, stats)
+            all_results["gap6_temp"] = tr_results
+        else:
+            print("  Skipping: checkpoint required. Run training first.")
+
+    # ── GAP 3: Duke Real Data ────────────────────────────────────
+    if "3" not in skip:
+        section("GAP 3: Real Data — Duke EDFA (Zero-shot + Few-shot)")
+        duke = load_duke_dataset(cfg["data"].get("duke_path", "data/real/duke/duke_edfa.h5"),
+                                  n_points=n_pts)
+        if duke is None:
+            print("  Real Duke data unavailable → using synthetic proxy")
+            duke = make_synthetic_duke_proxy(n_samples=1000, n_points=n_pts)
+
+        sc_eval = SpecCompress(cfg).to(device)
+        if os.path.exists(ckpt_path):
+            load_checkpoint(ckpt_path, sc_eval)
+        else:
+            sc_eval = train_baseline(sc_eval, train_loader, device, epochs=10)
+
+        zs = run_zero_shot_eval(sc_eval, duke, stats, device)
+        fs = run_few_shot_finetune(sc_eval, duke, stats, device, n_finetune=100)
+
+        print(f"\n  Zero-shot RMSE  : {zs['rmse_zero_shot']:.5f}  (no Duke fine-tuning)")
+        print(f"  Few-shot RMSE   : {fs['rmse_few_shot']:.5f}  (100-sample fine-tune)")
+        print(f"  Domain source   : {duke['source']}")
+        print(f"  Gap analysis    : fine-tuning on 100 real samples improves RMSE by "
+              f"{(zs['rmse_zero_shot']-fs['rmse_few_shot'])/zs['rmse_zero_shot']*100:.1f}%")
+        all_results["gap3_duke"] = {**zs, **fs}
+
+    # ── GAP 2: LLM Integration ───────────────────────────────────
+    if "2" not in skip:
+        section("GAP 2: LLM Task Benchmark")
+        sc_llm = SpecCompress(cfg).to(device)
+        if os.path.exists(ckpt_path):
+            load_checkpoint(ckpt_path, sc_llm)
+        else:
+            sc_llm = train_baseline(sc_llm, train_loader, device, epochs=10)
+
+        # Gather test data
+        sp_all  = np.concatenate([b["spectrum"].numpy()    for b in test_loader])[:40]
+        tp_all  = np.concatenate([b["temperature"].numpy() for b in test_loader])[:40]
+        wl_arr  = np.linspace(1530., 1565., n_pts)
+
+        llm_res = run_llm_benchmark(
+            model_sc=sc_llm,
+            spectra_norm=sp_all, temperatures=tp_all,
+            wavelengths=wl_arr, stats=stats,
+            pca=pca if "4" not in skip else None,
+            api_key=api_key, n_samples=20, cfg=cfg,
         )
-        x_hat_vae, x_true_vae = eval_model_on_loader(vae_model, test_loader2, device)
-        vae_metrics = compute_all_metrics(x_hat_vae, x_true_vae, label="VanillaAE")
-        _print_metrics(vae_metrics)
-        results["VanillaAE"] = vae_metrics
+        print_llm_results(llm_res)
+        all_results["gap2_llm"] = llm_res
 
-    # ── Summary Table ─────────────────────────────
-    print("\n" + "=" * 60)
-    print("  COMPARISON SUMMARY (test set)")
-    print("=" * 60)
-    metric_keys = ["rmse_mean", "snr_db", "power_err", "smoothness"]
-    header = f"{'Method':<20}" + "".join(f"{k:<18}" for k in metric_keys)
-    print(header)
-    print("-" * len(header))
-    for method, metrics in results.items():
-        row = f"{method:<20}"
-        for k in metric_keys:
-            full_key = f"{method}/{k}"
-            val = metrics.get(full_key, float("nan"))
-            row += f"{val:<18.5f}"
-        print(row)
-    print("=" * 60)
-
-    # Save results
-    import json
+    # ── Save all results ─────────────────────────────────────────
     os.makedirs("experiments", exist_ok=True)
-    with open("experiments/eval_results.json", "w") as f:
-        # Convert to serialisable
-        clean = {m: {k: round(v, 6) for k, v in mv.items()} for m, mv in results.items()}
-        json.dump(clean, f, indent=2)
-    print("\nResults saved → experiments/eval_results.json")
-
-
-def _print_metrics(metrics: dict):
-    for k, v in metrics.items():
-        print(f"  {k}: {v:.5f}")
+    out = "experiments/full_eval_results.json"
+    with open(out, "w") as f:
+        json.dump(all_results, f, indent=2, default=str)
+    print(f"\n{'='*65}")
+    print(f"  All results saved → {out}")
+    print(f"{'='*65}")
 
 
 if __name__ == "__main__":
