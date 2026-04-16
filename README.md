@@ -1,13 +1,19 @@
 # SpecCompress-India
-## Physics-Informed Neural Spectral Compression for Climate-Aware Optical Networks
 
-> Compresses 1000-dim EDFA gain spectra → 32-dim latent vectors.  
-> Temperature-conditioned (25°C–45°C India ambient range).  
-> Physics priors: smoothness + power conservation + OSNR penalty.
+> **Physics-Informed Neural Spectral Compression for Climate-Aware Optical Networks**
+
+[![CI](https://github.com/kesavadatta2410/Neural-Spectra-for-Optics/actions/workflows/ci.yml/badge.svg)](https://github.com/kesavadatta2410/Neural-Spectra-for-Optics/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C.svg)](https://pytorch.org/)
 
 ---
 
-## Architecture Design
+Compresses 1 000-point EDFA gain spectra → 10-dimensional latent vectors (**100× compression**) while enforcing physical consistency via four complementary loss terms. Temperature-conditioned for India's 25 °C – 45 °C tropical ambient range.
+
+---
+
+## Architecture
 
 ```
                     SYNTHETIC DATA GENERATOR
@@ -21,145 +27,115 @@
               [B, 1000] spectrum + [B] temperature
                           │
                ┌──────────┴───────────┐
-               │         ENCODER       │
-               │  1D CNN × 3 blocks   │  ← Learns shape-agnostic features
-               │  (stride=2 each)     │    from raw spectrum
+               │   ENCODER             │
+               │  1D CNN × 3 blocks   │  ← shape-agnostic spectral features
                │  GlobalPool + Flat   │
-               │         +            │
-               │  TempEmbed(16-dim)   │  ← Temperature injected HERE
-               │  (normalised °C)     │    AFTER CNN, BEFORE MLP
-               │  MLP [512→256→32]    │
+               │  TempEmbed (16-dim)  │  ← temperature injected after CNN
+               │  MLP [512→256→10]    │
                └──────────┬───────────┘
-                          │
-                    z [B, 32]  ← Compressed latent
-                          │
+                          │  z ∈ ℝ¹⁰   (100× compression)
                ┌──────────┴───────────┐
-               │         DECODER       │
-               │  TempEmbed(16-dim)   │  ← Temperature re-injected
-               │  concat(z, temp_emb) │    allows temp-conditional decode
-               │  MLP [256→512→1024   │
-               │      →1000]          │
+               │   DECODER             │
+               │  TempEmbed (16-dim)  │  ← temperature re-injected
+               │  concat(z, t_emb)    │
+               │  MLP [256→512→1000]  │
                └──────────┬───────────┘
                           │
               [B, 1000] reconstructed spectrum
                           │
                ┌──────────┴───────────┐
-               │    PHYSICS LOSS       │
-               │  L_recon  (MSE)  ×1.0│  Spectral fidelity
-               │  L_smooth (TV)   ×0.1│  No discontinuities
-               │  L_power         ×0.05│ Integral conservation
-               │  L_osnr          ×0.02│ Low-SNR region penalty
+               │  PHYSICS LOSS         │
+               │  L_recon  ×1.00      │  spectral fidelity (MSE)
+               │  L_smooth ×0.10      │  no high-freq artefacts (TV)
+               │  L_power  ×0.05      │  integral power conservation
+               │  L_osnr   ×0.02      │  low-SNR region up-weighting
                └──────────────────────┘
 ```
 
-**Temperature injection points:**
-1. **Encoder**: after CNN extraction, before MLP → conditions the compression
-2. **Decoder**: at entry → conditions the reconstruction
-
-This dual-injection allows the model to learn temperature-invariant spectral structure in latent space while still recovering temperature-dependent features at decode time.
-
-**Physics constraints influence learning:**
-- `L_smooth` prevents the decoder from producing non-physical high-freq artefacts
-- `L_power` ensures total optical power is conserved through encode-decode
-- `L_osnr` up-weights errors in low-power (high-noise) spectral regions, critical for OSNR budget
+Temperature is injected at **two** points: after CNN extraction (controls compression), and at decoder entry (controls reconstruction). This dual-injection lets the model learn temperature-invariant spectral structure while recovering temperature-dependent gain shifts at decode time.
 
 ---
 
 ## Installation
 
 ```bash
-# 1. Clone / unzip project
-cd SpecCompress-India
+# Clone
+git clone https://github.com/kesavadatta2410/Neural-Spectra-for-Optics.git
+cd Neural-Spectra-for-Optics
 
-# 2. Install dependencies
-pip install -r requirements.txt
+# Install (editable, with dev extras)
+pip install -e ".[dev]"
 
-# 3. Verify GPU (optional)
+# Verify GPU (optional)
 python -c "import torch; print(torch.cuda.is_available())"
 ```
 
 ---
 
-## Dataset Generation
+## Quick Start
 
 ```bash
-# Generate 50k train + 5k val + 5k test (default)
+# 1. Generate 50k train / 5k val / 5k test spectra
 python main.py generate
 
-# Custom sizes
-python main.py generate --n_train 100000 --n_val 10000 --n_test 10000
-
-# Custom resolution
-python main.py generate --n_points 1000 --out_dir data/synthetic
-```
-
-Output: `data/synthetic/{train,val,test}.h5`
-
----
-
-## Training
-
-```bash
-# Default config
+# 2. Train (100 epochs, cosine LR, early stopping)
 python main.py train
 
-# Override epochs and batch size
-python main.py train --epochs 50 --batch_size 512
-
-# Custom config
-python main.py train --config configs/config.yaml
+# 3. Full evaluation (all 6 research gaps)
+python main.py eval
 ```
-
-Checkpoints → `experiments/checkpoints/best.pt`  
-Logs → `experiments/logs/`
 
 ---
 
-## Evaluation
+## CLI Reference
 
-```bash
-# Full eval + baseline comparison
-python main.py eval
-
-# Custom checkpoint
-python main.py eval --ckpt experiments/checkpoints/best.pt
-```
-
-Outputs:
-- Console comparison table: SpecCompress vs PCA vs VanillaAE
-- `experiments/eval_results.json`
+| Command | Description |
+|---|---|
+| `python main.py generate` | Synthesise HDF5 datasets |
+| `python main.py train [--epochs N] [--batch_size B]` | Train SpecCompress |
+| `python main.py eval [--ckpt PATH] [--api_key KEY]` | Full eval suite |
+| `python main.py ablation` | Component ablation (Gap 5) |
+| `python main.py compression` | Compression ratio sweep (Gap 1) |
+| `python main.py temp` | Temperature robustness (Gap 6) |
 
 ---
 
 ## Project Structure
 
 ```
-SpecCompress-India/
+Neural-Spectra-for-Optics/
 ├── data/
-│   ├── synthetic/              ← HDF5 datasets (generated)
-│   ├── real/                   ← Real data cache (optional)
-│   ├── data_generation.py      ← PRIMARY synthetic generator
-│   └── real_data_loader.py     ← SECONDARY real data (COSMOS, GNPy)
-├── configs/
-│   └── config.yaml             ← All hyperparameters
+│   ├── data_generation.py      ← synthetic EDFA generator
+│   ├── real_data_loader.py     ← COSMOS / GNPy real data
+│   └── duke_loader.py          ← Duke EDFA dataset (202k samples)
 ├── models/
-│   ├── speccompress.py         ← Full model
-│   ├── encoder.py              ← 1D CNN + MLP encoder
-│   ├── decoder.py              ← MLP decoder
-│   └── physics_loss.py         ← Physics-informed loss
+│   ├── speccompress.py         ← full autoencoder (factory + ablation)
+│   ├── encoder.py              ← 1D CNN + temperature MLP encoder
+│   ├── decoder.py              ← temperature-conditioned MLP decoder
+│   ├── physics_loss.py         ← physics-informed composite loss
+│   └── baselines.py            ← PCA, DeepCompress, VQ-VAE, RD-AE
 ├── training/
-│   ├── train.py                ← Training entry point
-│   └── trainer.py              ← Training loop + scheduling
+│   ├── train.py                ← CLI entry-point
+│   └── trainer.py              ← training loop, LR scheduling, checkpointing
 ├── evaluation/
-│   ├── eval.py                 ← Eval + baseline comparison
-│   └── metrics.py              ← RMSE, SNR, power error
+│   ├── eval.py                 ← full evaluation suite (Gaps 1–6)
+│   ├── metrics.py              ← RMSE, SNR, power error, smoothness
+│   ├── ablation.py             ← component ablation (Gap 5)
+│   ├── compression_ablation.py ← latent-dim sweep (Gap 1)
+│   └── temp_robustness.py      ← OOD temperature analysis (Gap 6)
 ├── utils/
-│   ├── dataloader.py           ← HDF5 DataLoader
+│   ├── dataloader.py           ← HDF5 DataLoader + real-data merge
 │   ├── logger.py               ← CSV + console logger
-│   └── helpers.py              ← Seed, device, checkpoint utils
-├── experiments/                ← Auto-created during runs
-├── main.py                     ← CLI router
-├── requirements.txt
+│   ├── helpers.py              ← seed, device, checkpoint utilities
+│   └── llm_integration.py      ← LLM benchmark (Gap 2)
+├── configs/
+│   └── config.yaml             ← all hyperparameters (no hardcoding)
+├── tests/                      ← CPU smoke-tests (no data required)
+├── .github/workflows/ci.yml    ← GitHub Actions CI
+├── pyproject.toml              ← PEP 517/518 build config
+├── CITATION.cff                ← machine-readable citation
+├── CHANGELOG.md
+├── CONTRIBUTING.md
 └── README.md
 ```
 
@@ -167,30 +143,65 @@ SpecCompress-India/
 
 ## Reproducibility
 
-- All seeds fixed via `utils/helpers.set_seed(42)`
+- Seeds fixed globally via `utils.helpers.set_seed(42)`
 - `torch.backends.cudnn.deterministic = True`
-- Config saved alongside every checkpoint
+- Config YAML saved alongside every checkpoint
 - HDF5 seed stored as dataset attribute
 
 ---
 
-## Real Data Sources (Optional)
+## Expected Results (synthetic test set, 50k train, 100 epochs)
 
-| Source | Used For | Auto-download |
-|--------|----------|--------------|
-| COSMOS EDFA Dataset | Val augmentation | ✓ |
-| GNPy amp tables | Val augmentation | ✓ |
+| Method | RMSE ↓ | SNR (dB) ↑ | Power Err ↓ |
+|---|---|---|---|
+| **SpecCompress** | ~0.04 | ~28 | ~0.01 |
+| PCA (10-d) | ~0.14 | ~17 | ~0.04 |
+| DeepCompress | ~0.08 | ~22 | ~0.02 |
+| VQ-VAE | ~0.07 | ~23 | ~0.02 |
+| RD-AE | ~0.06 | ~25 | ~0.02 |
 
-Set `data.real_data.enabled: false` in config to disable.
+*(Normalised spectrum units; exact values depend on hardware and training duration.)*
 
 ---
 
-## Expected Results (synthetic test set, 50k train)
+## Real Data (Optional)
 
-| Method       | RMSE ↓   | SNR (dB) ↑ | Power Err ↓ |
-|-------------|----------|------------|-------------|
-| SpecCompress | ~0.04    | ~28        | ~0.01       |
-| PCA (32-d)   | ~0.12    | ~18        | ~0.03       |
-| VanillaAE    | ~0.07    | ~23        | ~0.02       |
+| Source | Use | Auto-download |
+|---|---|---|
+| COSMOS EDFA Dataset | Val augmentation | ✓ |
+| GNPy amp tables | Val augmentation | ✓ |
+| Duke EDFA (202k) | Zero/few-shot eval (Gap 3) | ✓ |
 
-*(Values in normalised spectrum units; exact numbers depend on hardware + epochs)*
+Set `data.real_data.enabled: false` in `config.yaml` to disable.
+
+---
+
+## Running Tests
+
+```bash
+pytest tests/ -v    # CPU-only, no data required, ~10 s
+```
+
+---
+
+## Citing This Work
+
+If you use SpecCompress-India in your research, please cite it using the metadata in [`CITATION.cff`](CITATION.cff):
+
+```bibtex
+@software{speccompress_india_2026,
+  author  = {Malli, Kesavadatta},
+  title   = {{SpecCompress-India}: Physics-Informed Neural Spectral Compression
+             for Climate-Aware Optical Networks},
+  year    = {2026},
+  version = {2.0.0},
+  url     = {https://github.com/kesavadatta2410/Neural-Spectra-for-Optics},
+  license = {MIT}
+}
+```
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Kesavadatta Malli

@@ -1,0 +1,61 @@
+[build-system]
+requires      = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name            = "speccompress-india"
+version         = "2.0.0"
+description     = "Physics-informed neural spectral compression for climate-aware optical networks"
+readme          = "README.md"
+license         = {file = "LICENSE"}
+requires-python = ">=3.10"
+keywords        = ["optical networks", "EDFA", "spectral compression",
+                   "physics-informed neural networks", "autoencoder"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+    "numpy>=1.24.0",
+    "h5py>=3.9.0",
+    "scipy>=1.11.0",
+    "scikit-learn>=1.3.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "matplotlib>=3.7.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+speccompress = "main:main"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["models*", "evaluation*", "training*", "utils*", "data*"]
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+python_files = ["test_*.py"]
+addopts      = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

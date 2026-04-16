@@ -1,20 +1,86 @@
-/data
-/optic
-# Model checkpoints
-experiments/checkpoints/
-*.pt
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.manifest
+*.spec
+MANIFEST
 
-# Checkpoints
-experiments/checkpoints/
-*.pt
+# ── Virtual environments ───────────────────────────────────────────────────────
+optic/
+venv/
+.venv/
+env/
+ENV/
+.env
+*.cfg
+!setup.cfg
+pyvenv.cfg
 
-# Data
+# ── Generated data (HDF5 / numpy) — regenerate with `python main.py generate` ─
 data/synthetic/
 data/real/
+data/temp_robustness/
+*.h5
+*.hdf5
+*.npy
+*.npz
 
-# Logs
-*.log
+# ── Model checkpoints & experiment outputs ────────────────────────────────────
+experiments/checkpoints/
+experiments/logs/
+experiments/*.json
+experiments/*.npy
+experiments/*.npz
+*.pt
+*.pth
+*.ckpt
 
+# ── IDE / editor ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
 
-2602.20144v1.pdf
-agentoptics_explainer.html
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Documentation build ───────────────────────────────────────────────────────
+docs/_build/
+site/

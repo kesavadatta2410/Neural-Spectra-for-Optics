@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use SpecCompress-India in your research, please cite it as below."
+type: software
+title: "SpecCompress-India: Physics-Informed Neural Spectral Compression for Climate-Aware Optical Networks"
+version: "2.0.0"
+date-released: "2026-04-16"
+license: MIT
+repository-code: "https://github.com/kesavadatta2410/Neural-Spectra-for-Optics"
+abstract: >
+  SpecCompress-India is a physics-informed neural autoencoder that compresses
+  1000-dimensional EDFA gain spectra to 10-dimensional latent vectors (100×
+  compression) while enforcing spectral smoothness, power conservation, and
+  OSNR-region fidelity. The model is temperature-conditioned for India's
+  25 °C–45 °C tropica-to-subtropical ambient range, and evaluated against
+  PCA, DeepCompress, VQ-VAE, and Rate-Distortion baselines.
+
+authors:
+  - family-names: "KD"
+    given-names: "Kesavadatta"
+    alias: "kesavadatta2410"
+
+keywords:
+  - optical networks
+  - EDFA
+  - spectral compression
+  - physics-informed neural networks
+  - autoencoder
+  - temperature conditioning
+  - India telecom
