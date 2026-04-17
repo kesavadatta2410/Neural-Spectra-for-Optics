@@ -46,7 +46,7 @@ loss:
   osnr_penalty_weight: 0.02
 
 training:
-  epochs: 100
+  epochs: 30
   lr: 1.0e-3
   lr_scheduler: "cosine"
   warmup_epochs: 5

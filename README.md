@@ -190,7 +190,7 @@ If you use SpecCompress-India in your research, please cite it using the metadat
 
 ```bibtex
 @software{speccompress_india_2026,
-  author  = {Malli, Kesavadatta},
+  author  = {Kesavadatta},
   title   = {{SpecCompress-India}: Physics-Informed Neural Spectral Compression
              for Climate-Aware Optical Networks},
   year    = {2026},
